@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+
+pdf/*.pdf
+output/*.csv
+
+!pdf/.gitkeep
+!output/.gitkeep
+
+/screen_recordings/
