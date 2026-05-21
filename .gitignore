@@ -8,4 +8,5 @@ output/*.csv
 !pdf/.gitkeep
 !output/.gitkeep
 
-/screen_recordings/
+/screen_recordings/pdf/Gastroenterology_20260521.zip
+pdf/

@@ -80,6 +80,18 @@ chmod +x run_pubmed_pdf_downloader.command
 - メタデータ: `output/metadata.csv`
 - 未取得リスト: `output/not_found.csv`
 - 手動確認用URL: `output/manual_check.csv`
+- 実行履歴: `output/history.csv`
+
+`history.csv` は実行ごとに追記されます。PMIDとタイトルを見比べやすいように、以下の列を保存します。
+
+- `date`: 実行日時
+- `status`: `downloaded`、`already_exists`、`not_found`
+- `PMID`
+- `title`
+- `pdf_file`
+- `source`
+- `url`
+- `reason`
 
 ## 注意点
 

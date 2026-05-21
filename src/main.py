@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+from datetime import datetime
 from pathlib import Path
 
 from .pdf_finder import PdfFinder
@@ -30,6 +32,7 @@ def main() -> int:
     metadata_rows: list[dict[str, str]] = []
     not_found_rows: list[dict[str, str]] = []
     manual_check_rows: list[dict[str, str]] = []
+    history_rows: list[dict[str, str]] = []
     downloaded_count = 0
     existing_count = 0
 
@@ -56,12 +59,30 @@ def main() -> int:
         if destination.exists() and destination.stat().st_size > 0:
             print(f"  Already exists: {destination.name}")
             existing_count += 1
+            history_rows.append(
+                history_row(
+                    article.pmid,
+                    article.title,
+                    "already_exists",
+                    pdf_file=destination.name,
+                )
+            )
             continue
 
         result = finder.download_pdf(article, destination)
         if result.success:
             print(f"  Downloaded from {result.source}: {destination.name}")
             downloaded_count += 1
+            history_rows.append(
+                history_row(
+                    article.pmid,
+                    article.title,
+                    "downloaded",
+                    pdf_file=destination.name,
+                    source=result.source,
+                    url=result.url,
+                )
+            )
         else:
             if destination.exists() and destination.stat().st_size == 0:
                 destination.unlink()
@@ -85,6 +106,15 @@ def main() -> int:
                     "reason": result.reason,
                 }
             )
+            history_rows.append(
+                history_row(
+                    article.pmid,
+                    article.title,
+                    "not_found",
+                    reason=result.reason,
+                    url=article.publisher_url,
+                )
+            )
 
         polite_pause()
 
@@ -103,10 +133,12 @@ def main() -> int:
         manual_check_rows,
         ["PMID", "title", "DOI", "manual_url", "note"],
     )
+    append_history_csv(OUTPUT_DIR / "history.csv", history_rows)
 
     print(f"Done. Metadata: {OUTPUT_DIR / 'metadata.csv'}")
     print(f"Done. Not found: {OUTPUT_DIR / 'not_found.csv'}")
     print(f"Done. Manual check: {OUTPUT_DIR / 'manual_check.csv'}")
+    print(f"Done. History: {OUTPUT_DIR / 'history.csv'}")
     print(f"PDF directory: {PDF_DIR}")
     print("")
     print("Summary:")
@@ -115,6 +147,41 @@ def main() -> int:
     print(f"  PDFs already present: {existing_count}")
     print(f"  PDFs not found: {len(not_found_rows)}")
     return 0
+
+
+def history_row(
+    pmid: str,
+    title: str,
+    status: str,
+    pdf_file: str = "",
+    source: str = "",
+    url: str = "",
+    reason: str = "",
+) -> dict[str, str]:
+    run_date = datetime.now().astimezone().isoformat(timespec="seconds")
+    return {
+        "date": run_date,
+        "status": status,
+        "PMID": pmid,
+        "title": title,
+        "pdf_file": pdf_file,
+        "source": source,
+        "url": url,
+        "reason": reason,
+    }
+
+
+def append_history_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    if not rows:
+        return
+
+    fieldnames = ["date", "status", "PMID", "title", "pdf_file", "source", "url", "reason"]
+    exists = path.exists() and path.stat().st_size > 0
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        if not exists:
+            writer.writeheader()
+        writer.writerows(rows)
 
 
 if __name__ == "__main__":
