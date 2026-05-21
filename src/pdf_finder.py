@@ -62,8 +62,8 @@ class PdfFinder:
         if result.reason:
             reasons.append(f"Europe PMC: {result.reason}")
 
-        if metadata.doi:
-            result = self._try_publisher_pdf_candidates(metadata.doi, destination)
+        if metadata.doi or metadata.pii:
+            result = self._try_publisher_pdf_candidates(metadata, destination)
             if result.success:
                 return result
             if result.reason:
@@ -151,8 +151,8 @@ class PdfFinder:
 
         return self._download_if_pdf(pdf_url, destination, "Unpaywall")
 
-    def _try_publisher_pdf_candidates(self, doi: str, destination: Path) -> PdfResult:
-        candidates = self._publisher_pdf_candidates(doi)
+    def _try_publisher_pdf_candidates(self, metadata: ArticleMetadata, destination: Path) -> PdfResult:
+        candidates = self._publisher_pdf_candidates(metadata)
         if not candidates:
             return PdfResult(success=False, source="Publisher", reason="No known publisher PDF candidate")
 
@@ -167,18 +167,33 @@ class PdfFinder:
 
         return PdfResult(success=False, source="Publisher", reason=last_reason or "Publisher PDF not found")
 
-    def _publisher_pdf_candidates(self, doi: str) -> list[str]:
-        normalized = doi.strip()
+    def _publisher_pdf_candidates(self, metadata: ArticleMetadata) -> list[str]:
+        normalized = metadata.doi.strip()
         lower = normalized.lower()
         encoded = quote(normalized, safe="/")
+        pii = normalize_pii(metadata.pii)
+        candidates: list[str] = []
 
         if lower.startswith("10.1111/"):
-            return [f"https://onlinelibrary.wiley.com/doi/epdf/{encoded}"]
+            candidates.append(f"https://onlinelibrary.wiley.com/doi/epdf/{encoded}")
 
-        return []
+        if lower.startswith("10.1053/") and pii:
+            compact_pii = compact_pii_for_url(pii)
+            candidates.extend(
+                [
+                    f"https://www.gastrojournal.org/article/{pii}/pdf",
+                    f"https://www.sciencedirect.com/science/article/pii/{compact_pii}/pdfft",
+                    f"https://www.sciencedirect.com/science/article/pii/{compact_pii}/pdf",
+                ]
+            )
+
+        return candidates
 
     def manual_pdf_candidates(self, doi: str) -> list[str]:
-        return self._publisher_pdf_candidates(doi)
+        return self._publisher_pdf_candidates(ArticleMetadata(pmid="", doi=doi))
+
+    def manual_pdf_candidates_for_article(self, metadata: ArticleMetadata) -> list[str]:
+        return self._publisher_pdf_candidates(metadata)
 
     def _try_europe_pmc(self, metadata: ArticleMetadata, destination: Path) -> PdfResult:
         queries: list[str] = []
@@ -299,3 +314,11 @@ class PmcPdfLinkParser(HTMLParser):
             or "pdf" in aria_label
         ):
             self.pdf_url = urljoin(self.base_url, href)
+
+
+def normalize_pii(value: str) -> str:
+    return value.strip().strip("()")
+
+
+def compact_pii_for_url(value: str) -> str:
+    return "".join(char for char in value if char.isalnum())

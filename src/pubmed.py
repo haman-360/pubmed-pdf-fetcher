@@ -19,6 +19,7 @@ class ArticleMetadata:
     year: str = ""
     doi: str = ""
     pmcid: str = ""
+    pii: str = ""
     publisher_url: str = ""
 
     def as_csv_row(self) -> dict[str, str]:
@@ -29,6 +30,7 @@ class ArticleMetadata:
             "year": self.year,
             "DOI": self.doi,
             "PMCID": self.pmcid,
+            "PII": self.pii,
             "publisher_url": self.publisher_url,
         }
 
@@ -76,6 +78,7 @@ class PubMedClient:
         year = extract_year(article)
         doi = extract_article_id(article, "doi")
         pmcid = normalize_pmcid(extract_article_id(article, "pmc"))
+        pii = extract_article_id(article, "pii")
         publisher_url = f"https://doi.org/{doi}" if doi else f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
 
         return ArticleMetadata(
@@ -85,6 +88,7 @@ class PubMedClient:
             year=year,
             doi=doi,
             pmcid=pmcid,
+            pii=pii,
             publisher_url=publisher_url,
         )
 
@@ -135,4 +139,3 @@ def extract_year(article: ET.Element) -> str:
 
 def polite_pause() -> None:
     time.sleep(0.34)
-

@@ -66,7 +66,7 @@ def main() -> int:
             if destination.exists() and destination.stat().st_size == 0:
                 destination.unlink()
             print(f"  Not found: {result.reason}")
-            for manual_url in finder.manual_pdf_candidates(article.doi):
+            for manual_url in finder.manual_pdf_candidates_for_article(article):
                 manual_check_rows.append(
                     {
                         "PMID": article.pmid,
@@ -91,7 +91,7 @@ def main() -> int:
     write_csv(
         OUTPUT_DIR / "metadata.csv",
         metadata_rows,
-        ["PMID", "title", "journal", "year", "DOI", "PMCID", "publisher_url"],
+        ["PMID", "title", "journal", "year", "DOI", "PMCID", "PII", "publisher_url"],
     )
     write_csv(
         OUTPUT_DIR / "not_found.csv",

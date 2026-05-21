@@ -8,6 +8,7 @@ PMIDリストから論文メタデータを取得し、合法的に公開され�
 - PMCIDがある論文は PubMed Central の公開PDF取得を試行
 - DOIがある論文は Unpaywall API と Europe PMC API でOA PDF URLを検索
 - 一部出版社については、認証不要でPDFとして返る既知の正規PDF URLだけを試行
+- PubMedのメタデータにPIIが含まれる場合は、出版社PDF候補の生成にも利用
 - 取得できたPDFを `pdf/` に保存
 - 全論文のメタデータを `output/metadata.csv` に出力
 - 取得できなかった論文を `output/not_found.csv` に出力
@@ -83,7 +84,8 @@ chmod +x run_pubmed_pdf_downloader.command
 ## 注意点
 
 - このツールは、PubMed Central、Unpaywall、Europe PMC、または認証不要でPDFとして返る出版社の正規PDF URLから取得します。
-- 現在、出版社PDF候補として Wiley Online Library の `https://onlinelibrary.wiley.com/doi/epdf/{DOI}` 形式を試行します。
+- 現在、出版社PDF候補として Wiley Online Library の `https://onlinelibrary.wiley.com/doi/epdf/{DOI}` 形式、Gastrojournal / ScienceDirect 系のPIIベースPDF URLを試行します。
+- PubMedにOpen accessやFree full textの表示があっても、APIからPDF直リンクが得られない場合があります。その場合は出版社候補URLを試し、PDFではなくHTML、CAPTCHA、ログイン画面が返った場合は自動保存しません。
 - 有料論文、所属機関ログイン、出版社サイトの認証が必要なPDFは取得しません。
 - 出版社サイトでCAPTCHA、画像選択クイズ、ログイン確認が出る場合は自動取得しません。その場合は `output/manual_check.csv` のURLをブラウザで開き、手動で確認してください。
 - 認証回避やスクレイピングによるPDF取得は行いません。
