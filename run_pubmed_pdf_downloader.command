@@ -23,8 +23,14 @@ echo ""
 if [ -z "$UNPAYWALL_EMAIL" ]; then
   echo "UNPAYWALL_EMAIL is not set."
   echo "PMC PDF download will still be tried, but Unpaywall search will be skipped."
-  echo "To enable Unpaywall, run this in Terminal before launching:"
-  echo '  export UNPAYWALL_EMAIL="your-email@example.com"'
+  echo ""
+  echo "Enter your email address to enable Unpaywall for this run."
+  echo "Leave blank and press Enter to skip Unpaywall."
+  printf "Email: "
+  read EMAIL_INPUT
+  if [ -n "$EMAIL_INPUT" ]; then
+    export UNPAYWALL_EMAIL="$EMAIL_INPUT"
+  fi
   echo ""
 fi
 
@@ -35,4 +41,3 @@ echo ""
 echo "Finished."
 echo "Press Enter to close this window."
 read
-

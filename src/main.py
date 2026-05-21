@@ -29,6 +29,9 @@ def main() -> int:
 
     metadata_rows: list[dict[str, str]] = []
     not_found_rows: list[dict[str, str]] = []
+    manual_check_rows: list[dict[str, str]] = []
+    downloaded_count = 0
+    existing_count = 0
 
     print(f"Fetching metadata for {len(pmids)} PMID(s)...")
     articles = pubmed.fetch_metadata(pmids)
@@ -52,15 +55,27 @@ def main() -> int:
         destination = PDF_DIR / pdf_filename(article.pmid, article.title)
         if destination.exists() and destination.stat().st_size > 0:
             print(f"  Already exists: {destination.name}")
+            existing_count += 1
             continue
 
         result = finder.download_pdf(article, destination)
         if result.success:
             print(f"  Downloaded from {result.source}: {destination.name}")
+            downloaded_count += 1
         else:
             if destination.exists() and destination.stat().st_size == 0:
                 destination.unlink()
             print(f"  Not found: {result.reason}")
+            for manual_url in finder.manual_pdf_candidates(article.doi):
+                manual_check_rows.append(
+                    {
+                        "PMID": article.pmid,
+                        "title": article.title,
+                        "DOI": article.doi,
+                        "manual_url": manual_url,
+                        "note": "Open manually in a browser if publisher requires CAPTCHA or login.",
+                    }
+                )
             not_found_rows.append(
                 {
                     "PMID": article.pmid,
@@ -83,13 +98,24 @@ def main() -> int:
         not_found_rows,
         ["PMID", "title", "DOI", "publisher_url", "reason"],
     )
+    write_csv(
+        OUTPUT_DIR / "manual_check.csv",
+        manual_check_rows,
+        ["PMID", "title", "DOI", "manual_url", "note"],
+    )
 
     print(f"Done. Metadata: {OUTPUT_DIR / 'metadata.csv'}")
     print(f"Done. Not found: {OUTPUT_DIR / 'not_found.csv'}")
+    print(f"Done. Manual check: {OUTPUT_DIR / 'manual_check.csv'}")
     print(f"PDF directory: {PDF_DIR}")
+    print("")
+    print("Summary:")
+    print(f"  Articles processed: {len(articles)}")
+    print(f"  PDFs downloaded: {downloaded_count}")
+    print(f"  PDFs already present: {existing_count}")
+    print(f"  PDFs not found: {len(not_found_rows)}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

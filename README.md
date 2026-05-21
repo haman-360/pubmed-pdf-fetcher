@@ -6,7 +6,8 @@ PMIDリストから論文メタデータを取得し、合法的に公開され�
 
 - `input/pmids.txt` に書いたPMIDから、NCBI E-utilitiesでメタデータを取得
 - PMCIDがある論文は PubMed Central の公開PDF取得を試行
-- DOIがある論文は Unpaywall API でOA PDF URLを検索
+- DOIがある論文は Unpaywall API と Europe PMC API でOA PDF URLを検索
+- 一部出版社については、認証不要でPDFとして返る既知の正規PDF URLだけを試行
 - 取得できたPDFを `pdf/` に保存
 - 全論文のメタデータを `output/metadata.csv` に出力
 - 取得できなかった論文を `output/not_found.csv` に出力
@@ -18,6 +19,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+Mac標準PythonではSSLライブラリの都合で警告が出ることがあるため、`urllib3<2` を指定しています。
 
 ## Unpaywall API用メールアドレス
 
@@ -45,6 +48,17 @@ source ~/.zshrc
 30049270
 ```
 
+`#` で始まる行は無視されます。取得済みや、今回は再試行しないPMIDはコメントアウトして管理できます。
+
+```text
+# done: 42055592
+# not_found_2026-05-21: 42068093
+42055088
+42017769
+```
+
+未取得だった論文でも、後日 Unpaywall や Europe PMC にPDFリンクが追加されることがあります。再確認したい場合は、先頭の `#` を外してもう一度実行してください。
+
 実行します。
 
 ```bash
@@ -64,11 +78,14 @@ chmod +x run_pubmed_pdf_downloader.command
 - PDF: `pdf/`
 - メタデータ: `output/metadata.csv`
 - 未取得リスト: `output/not_found.csv`
+- 手動確認用URL: `output/manual_check.csv`
 
 ## 注意点
 
-- このツールは、PubMed Central または Unpaywall で合法的に公開されているOA PDFのみ取得します。
+- このツールは、PubMed Central、Unpaywall、Europe PMC、または認証不要でPDFとして返る出版社の正規PDF URLから取得します。
+- 現在、出版社PDF候補として Wiley Online Library の `https://onlinelibrary.wiley.com/doi/epdf/{DOI}` 形式を試行します。
 - 有料論文、所属機関ログイン、出版社サイトの認証が必要なPDFは取得しません。
+- 出版社サイトでCAPTCHA、画像選択クイズ、ログイン確認が出る場合は自動取得しません。その場合は `output/manual_check.csv` のURLをブラウザで開き、手動で確認してください。
 - 認証回避やスクレイピングによるPDF取得は行いません。
 - 大量アクセスを避けるため、月5〜10件程度の利用を想定しています。
 - NCBI E-utilitiesの利用では、必要に応じて `NCBI_API_KEY` を環境変数に設定できます。
