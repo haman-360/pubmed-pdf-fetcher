@@ -6,9 +6,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 
 EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+EFETCH_BATCH_SIZE = 200
 
 
 @dataclass
@@ -40,28 +43,47 @@ class PubMedClient:
         self.timeout = timeout
         self.session = requests.Session()
         self.api_key = os.getenv("NCBI_API_KEY", "")
+        self.email = os.getenv("NCBI_EMAIL", "") or os.getenv("UNPAYWALL_EMAIL", "")
+        retry = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET", "POST"}),
+        )
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
 
     def fetch_metadata(self, pmids: list[str]) -> list[ArticleMetadata]:
         if not pmids:
             return []
 
-        params = {
-            "db": "pubmed",
-            "id": ",".join(pmids),
-            "retmode": "xml",
-        }
-        if self.api_key:
-            params["api_key"] = self.api_key
+        records: list[ArticleMetadata] = []
+        for start in range(0, len(pmids), EFETCH_BATCH_SIZE):
+            batch = pmids[start : start + EFETCH_BATCH_SIZE]
+            params = {
+                "db": "pubmed",
+                "id": ",".join(batch),
+                "retmode": "xml",
+                "tool": "pubmed_pdf_fetcher",
+            }
+            if self.email:
+                params["email"] = self.email
+            if self.api_key:
+                params["api_key"] = self.api_key
 
-        response = self.session.get(
-            f"{EUTILS_BASE}/efetch.fcgi",
-            params=params,
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
+            if len(batch) > 100:
+                response = self.session.post(
+                    f"{EUTILS_BASE}/efetch.fcgi", data=params, timeout=self.timeout
+                )
+            else:
+                response = self.session.get(
+                    f"{EUTILS_BASE}/efetch.fcgi", params=params, timeout=self.timeout
+                )
+            response.raise_for_status()
 
-        root = ET.fromstring(response.content)
-        records = [self._parse_article(article) for article in root.findall(".//PubmedArticle")]
+            root = ET.fromstring(response.content)
+            records.extend(self._parse_article(article) for article in root.findall(".//PubmedArticle"))
+            if start + EFETCH_BATCH_SIZE < len(pmids):
+                time.sleep(0.34)
         found = {record.pmid for record in records}
 
         for pmid in pmids:

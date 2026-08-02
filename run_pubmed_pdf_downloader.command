@@ -35,7 +35,11 @@ if [ -z "$UNPAYWALL_EMAIL" ]; then
 fi
 
 echo "Starting download..."
-python -m src.main input/pmids.txt
+if [ "$#" -gt 0 ]; then
+  python -m src.main "$@"
+else
+  python -m src.main input/pmids.txt
+fi
 
 echo ""
 echo "Finished."

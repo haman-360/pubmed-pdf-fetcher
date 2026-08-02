@@ -4,10 +4,13 @@ import argparse
 import csv
 from datetime import datetime
 from pathlib import Path
+import xml.etree.ElementTree as ET
+
+import requests
 
 from .pdf_finder import PdfFinder
 from .pubmed import PubMedClient, polite_pause
-from .utils import ensure_directories, pdf_filename, read_pmids, write_csv
+from .utils import extract_pmids, ensure_directories, pdf_filename, read_clipboard, read_pmids, write_csv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -17,13 +20,28 @@ PDF_DIR = PROJECT_ROOT / "pdf"
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Download legally available OA PDFs from a PMID list.")
-    parser.add_argument("pmid_file", type=Path, help="Path to a text file containing one PMID per line.")
+    input_group = parser.add_mutually_exclusive_group()
+    input_group.add_argument(
+        "pmid_file",
+        type=Path,
+        nargs="?",
+        default=PROJECT_ROOT / "input" / "pmids.txt",
+        help="Text or .docx file containing PMIDs (default: input/pmids.txt).",
+    )
+    input_group.add_argument(
+        "--clipboard",
+        action="store_true",
+        help="Extract PMIDs from the macOS clipboard (useful after copying a Google Doc).",
+    )
     args = parser.parse_args()
 
     ensure_directories(OUTPUT_DIR, PDF_DIR)
-    pmids = read_pmids(args.pmid_file)
+    try:
+        pmids = extract_pmids(read_clipboard()) if args.clipboard else read_pmids(args.pmid_file)
+    except (OSError, ValueError) as exc:
+        parser.error(str(exc))
     if not pmids:
-        print("No PMIDs found.")
+        print("No explicit PMIDs found. Use lines such as 'PMID: 31452104' or a PubMed URL.")
         return 0
 
     pubmed = PubMedClient()
@@ -37,7 +55,11 @@ def main() -> int:
     existing_count = 0
 
     print(f"Fetching metadata for {len(pmids)} PMID(s)...")
-    articles = pubmed.fetch_metadata(pmids)
+    try:
+        articles = pubmed.fetch_metadata(pmids)
+    except (requests.RequestException, ET.ParseError) as exc:
+        print(f"Could not fetch PubMed metadata: {exc}")
+        return 1
 
     for index, article in enumerate(articles, start=1):
         print(f"[{index}/{len(articles)}] PMID {article.pmid}: {article.title or 'title unavailable'}")
@@ -56,7 +78,7 @@ def main() -> int:
             continue
 
         destination = PDF_DIR / pdf_filename(article.pmid, article.title)
-        if destination.exists() and destination.stat().st_size > 0:
+        if finder.is_pdf_file(destination):
             print(f"  Already exists: {destination.name}")
             existing_count += 1
             history_rows.append(

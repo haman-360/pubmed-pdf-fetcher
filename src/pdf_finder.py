@@ -8,6 +8,8 @@ from urllib.parse import quote, urljoin
 import xml.etree.ElementTree as ET
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from .pubmed import ArticleMetadata
 
@@ -37,6 +39,13 @@ class PdfFinder:
                 "Accept": "application/pdf,application/json,text/html;q=0.8,*/*;q=0.5",
             }
         )
+        retry = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+        )
+        self.session.mount("https://", HTTPAdapter(max_retries=retry))
         self.unpaywall_email = os.getenv("UNPAYWALL_EMAIL", "")
 
     def download_pdf(self, metadata: ArticleMetadata, destination: Path) -> PdfResult:
@@ -134,38 +143,51 @@ class PdfFinder:
             return PdfResult(success=False, source="Unpaywall", reason="UNPAYWALL_EMAIL is not set")
 
         url = f"https://api.unpaywall.org/v2/{quote(doi, safe='')}"
-        response = self.session.get(
-            url,
-            params={"email": self.unpaywall_email},
-            timeout=self.timeout,
-        )
+        try:
+            response = self.session.get(
+                url,
+                params={"email": self.unpaywall_email},
+                timeout=self.timeout,
+            )
+            if response.status_code == 404:
+                return PdfResult(success=False, source="Unpaywall", reason="DOI not found in Unpaywall")
+            response.raise_for_status()
+            data = response.json()
+        except (requests.RequestException, ValueError) as exc:
+            return PdfResult(success=False, source="Unpaywall", reason=f"API request failed: {exc}")
 
-        if response.status_code == 404:
-            return PdfResult(success=False, source="Unpaywall", reason="DOI not found in Unpaywall")
-        response.raise_for_status()
-
-        data = response.json()
-        pdf_url = self._best_unpaywall_pdf_url(data)
-        if not pdf_url:
+        pdf_urls = self._unpaywall_pdf_urls(data)
+        if not pdf_urls:
             return PdfResult(success=False, source="Unpaywall", reason="No OA PDF URL in Unpaywall")
 
-        return self._download_if_pdf(pdf_url, destination, "Unpaywall")
+        last_result = PdfResult(success=False, source="Unpaywall", reason="No downloadable OA PDF found")
+        for pdf_url in pdf_urls:
+            last_result = self._download_if_pdf(pdf_url, destination, "Unpaywall")
+            if last_result.success:
+                return last_result
+        return last_result
 
     def _try_publisher_pdf_candidates(self, metadata: ArticleMetadata, destination: Path) -> PdfResult:
         candidates = self._publisher_pdf_candidates(metadata)
-        if not candidates:
-            return PdfResult(success=False, source="Publisher", reason="No known publisher PDF candidate")
-
         last_reason = ""
         for url in candidates:
             result = self._download_if_pdf(url, destination, "Publisher")
             if result.success:
                 return result
             last_reason = result.reason
-            if result.reason == "PDF requires authentication":
-                break
 
-        return PdfResult(success=False, source="Publisher", reason=last_reason or "Publisher PDF not found")
+        landing_pdf_url = self._publisher_landing_pdf_url(metadata.publisher_url)
+        if landing_pdf_url and landing_pdf_url not in candidates:
+            result = self._download_if_pdf(landing_pdf_url, destination, "Publisher metadata")
+            if result.success:
+                return result
+            last_reason = result.reason
+
+        return PdfResult(
+            success=False,
+            source="Publisher",
+            reason=last_reason or "No public PDF link found on the publisher page",
+        )
 
     def _publisher_pdf_candidates(self, metadata: ArticleMetadata) -> list[str]:
         normalized = metadata.doi.strip()
@@ -193,7 +215,30 @@ class PdfFinder:
         return self._publisher_pdf_candidates(ArticleMetadata(pmid="", doi=doi))
 
     def manual_pdf_candidates_for_article(self, metadata: ArticleMetadata) -> list[str]:
-        return self._publisher_pdf_candidates(metadata)
+        candidates = self._publisher_pdf_candidates(metadata)
+        if metadata.publisher_url:
+            candidates.append(metadata.publisher_url)
+        return list(dict.fromkeys(candidates))
+
+    def _publisher_landing_pdf_url(self, landing_url: str) -> str:
+        if not landing_url:
+            return ""
+        try:
+            response = self.session.get(
+                landing_url,
+                timeout=self.timeout,
+                headers={"Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5"},
+            )
+            response.raise_for_status()
+        except requests.RequestException:
+            return ""
+
+        content_type = response.headers.get("Content-Type", "").split(";")[0].strip().lower()
+        if content_type not in {"text/html", "application/xhtml+xml"}:
+            return ""
+        parser = PublisherPdfLinkParser(response.url)
+        parser.feed(response.text)
+        return parser.pdf_url
 
     def _try_europe_pmc(self, metadata: ArticleMetadata, destination: Path) -> PdfResult:
         queries: list[str] = []
@@ -247,19 +292,30 @@ class PdfFinder:
 
         return ""
 
-    def _best_unpaywall_pdf_url(self, data: dict) -> str:
+    def _unpaywall_pdf_urls(self, data: dict) -> list[str]:
+        urls: list[str] = []
         best = data.get("best_oa_location") or {}
         if best.get("url_for_pdf"):
-            return best["url_for_pdf"]
+            urls.append(best["url_for_pdf"])
 
         for location in data.get("oa_locations") or []:
             if location.get("url_for_pdf"):
-                return location["url_for_pdf"]
+                urls.append(location["url_for_pdf"])
 
-        return ""
+        return list(dict.fromkeys(urls))
+
+    @staticmethod
+    def is_pdf_file(path: Path) -> bool:
+        try:
+            with path.open("rb") as handle:
+                return handle.read(5) == b"%PDF-"
+        except OSError:
+            return False
 
     def _download_if_pdf(self, url: str, destination: Path, source: str) -> PdfResult:
+        temporary = destination.with_suffix(destination.suffix + ".part")
         try:
+            temporary.unlink(missing_ok=True)
             with self.session.get(url, timeout=self.timeout, stream=True, allow_redirects=True) as response:
                 if response.status_code in {401, 403}:
                     return PdfResult(False, source=source, url=url, reason="PDF requires authentication")
@@ -277,15 +333,20 @@ class PdfFinder:
                         reason = "Publisher returned HTML instead of PDF; manual browser check, CAPTCHA, or login may be required"
                     return PdfResult(False, source=source, url=url, reason=reason)
 
-                with destination.open("wb") as handle:
+                with temporary.open("wb") as handle:
                     handle.write(first_chunk)
                     for chunk in chunks:
                         if chunk:
                             handle.write(chunk)
 
+            temporary.replace(destination)
             return PdfResult(True, source=source, url=url)
         except requests.RequestException as exc:
             return PdfResult(False, source=source, url=url, reason=f"Download failed: {exc}")
+        except OSError as exc:
+            return PdfResult(False, source=source, url=url, reason=f"Could not save PDF: {exc}")
+        finally:
+            temporary.unlink(missing_ok=True)
 
 
 class PmcPdfLinkParser(HTMLParser):
@@ -314,6 +375,29 @@ class PmcPdfLinkParser(HTMLParser):
             or "pdf" in aria_label
         ):
             self.pdf_url = urljoin(self.base_url, href)
+
+
+class PublisherPdfLinkParser(HTMLParser):
+    """Find standard scholarly HTML metadata that explicitly points to a PDF."""
+
+    def __init__(self, base_url: str) -> None:
+        super().__init__()
+        self.base_url = base_url
+        self.pdf_url = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.pdf_url:
+            return
+        attr_map = {key.lower(): value or "" for key, value in attrs}
+        if tag.lower() == "meta":
+            field_name = (attr_map.get("name") or attr_map.get("property")).lower()
+            if field_name in {"citation_pdf_url", "wkhealth_pdf_url"} and attr_map.get("content"):
+                self.pdf_url = urljoin(self.base_url, attr_map["content"])
+        elif tag.lower() == "link":
+            rel = attr_map.get("rel", "").lower().split()
+            media_type = attr_map.get("type", "").lower()
+            if "alternate" in rel and media_type == "application/pdf" and attr_map.get("href"):
+                self.pdf_url = urljoin(self.base_url, attr_map["href"])
 
 
 def normalize_pii(value: str) -> str:

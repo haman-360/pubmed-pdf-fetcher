@@ -4,10 +4,11 @@ PMIDリストから論文メタデータを取得し、合法的に公開され�
 
 ## できること
 
-- `input/pmids.txt` に書いたPMIDから、NCBI E-utilitiesでメタデータを取得
+- `input/pmids.txt`、Google Docsからコピーした文章、または `.docx` に含まれるPMIDから、NCBI E-utilitiesでメタデータを取得
 - PMCIDがある論文は PubMed Central の公開PDF取得を試行
 - DOIがある論文は Unpaywall API と Europe PMC API でOA PDF URLを検索
-- 一部出版社については、認証不要でPDFとして返る既知の正規PDF URLだけを試行
+- Unpaywallの最優先URLが失敗した場合も、残りのOA PDF候補を順に試行
+- 一部出版社の既知の正規PDF URLと、出版社ページが標準メタデータで明示するPDF URLを試行
 - PubMedのメタデータにPIIが含まれる場合は、出版社PDF候補の生成にも利用
 - 取得できたPDFを `pdf/` に保存
 - 全論文のメタデータを `output/metadata.csv` に出力
@@ -82,6 +83,42 @@ chmod +x run_pubmed_pdf_downloader.command
 - 手動確認用URL: `output/manual_check.csv`
 - 実行履歴: `output/history.csv`
 
+## Google Docsから簡単に実行する
+
+Google Docs APIの認証設定は不要です。Google Document内に `PMID: 31452104`、PubMed URL、またはPMIDだけの行が含まれていれば利用できます。
+
+1. Google Documentを開き、対象範囲（または全文）をコピー
+2. `run_from_clipboard.command` をダブルクリック
+3. 抽出されたPMIDのメタデータ取得とPDF探索がそのまま始まる
+
+初回のみ実行権限を付けます。
+
+```bash
+chmod +x run_from_clipboard.command
+```
+
+ターミナルから実行する場合:
+
+```bash
+python -m src.main --clipboard
+```
+
+Google Docsから「Microsoft Word（.docx）」でダウンロードしたファイルも直接指定できます。
+
+```bash
+python -m src.main ~/Downloads/pubmed-abstract.docx
+```
+
+年、ページ番号、DOI中の数字などをPMIDと誤認しないよう、任意の数字列は取り込みません。PMIDは次のいずれかの形式にしてください。
+
+```text
+PMID: 31452104
+https://pubmed.ncbi.nlm.nih.gov/30049270/
+42055088
+```
+
+重複するPMIDは最初の出現だけを使用します。
+
 `history.csv` は実行ごとに追記されます。PMIDとタイトルを見比べやすいように、以下の列を保存します。
 
 - `date`: 実行日時
@@ -97,13 +134,18 @@ chmod +x run_pubmed_pdf_downloader.command
 
 - このツールは、PubMed Central、Unpaywall、Europe PMC、または認証不要でPDFとして返る出版社の正規PDF URLから取得します。
 - 現在、出版社PDF候補として Wiley Online Library の `https://onlinelibrary.wiley.com/doi/epdf/{DOI}` 形式、Gastrojournal / ScienceDirect 系のPIIベースPDF URLを試行します。
+- それ以外の出版社でも、論文ページに `citation_pdf_url` などの標準的なPDFメタデータがあり、認証なしで実際のPDFが返る場合は保存します。
 - PubMedにOpen accessやFree full textの表示があっても、APIからPDF直リンクが得られない場合があります。その場合は出版社候補URLを試し、PDFではなくHTML、CAPTCHA、ログイン画面が返った場合は自動保存しません。
 - 有料論文、所属機関ログイン、出版社サイトの認証が必要なPDFは取得しません。
 - 出版社サイトでCAPTCHA、画像選択クイズ、ログイン確認が出る場合は自動取得しません。その場合は `output/manual_check.csv` のURLをブラウザで開き、手動で確認してください。
 - 認証回避やスクレイピングによるPDF取得は行いません。
 - 大量アクセスを避けるため、月5〜10件程度の利用を想定しています。
 - NCBI E-utilitiesの利用では、必要に応じて `NCBI_API_KEY` を環境変数に設定できます。
+- NCBIの推奨に沿って連絡先を送信する場合は、`NCBI_EMAIL` を環境変数に設定できます。未設定時は `UNPAYWALL_EMAIL` を利用します。
 
 ```bash
 export NCBI_API_KEY="your-ncbi-api-key"
+export NCBI_EMAIL="your-email@example.com"
 ```
+
+一時的な通信エラーは自動再試行します。PDFは `.part` ファイルへ一時保存し、ダウンロード完了後にだけ正式なファイル名へ切り替えるため、中断したファイルを取得済みと誤認しません。
