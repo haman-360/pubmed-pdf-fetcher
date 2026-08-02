@@ -390,7 +390,7 @@ class PublisherPdfLinkParser(HTMLParser):
             return
         attr_map = {key.lower(): value or "" for key, value in attrs}
         if tag.lower() == "meta":
-            field_name = (attr_map.get("name") or attr_map.get("property")).lower()
+            field_name = (attr_map.get("name") or attr_map.get("property") or "").lower()
             if field_name in {"citation_pdf_url", "wkhealth_pdf_url"} and attr_map.get("content"):
                 self.pdf_url = urljoin(self.base_url, attr_map["content"])
         elif tag.lower() == "link":

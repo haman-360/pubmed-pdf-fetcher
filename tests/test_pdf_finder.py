@@ -42,6 +42,15 @@ class PdfFinderTests(unittest.TestCase):
 
         self.assertEqual(parser.pdf_url, "https://journal.example.test/article/1.pdf")
 
+    def test_publisher_parser_ignores_meta_without_name_or_property(self) -> None:
+        parser = PublisherPdfLinkParser("https://journal.example.test/article/1")
+        parser.feed(
+            '<meta charset="utf-8"><meta name>'
+            '<meta name="citation_pdf_url" content="/article/1.pdf">'
+        )
+
+        self.assertEqual(parser.pdf_url, "https://journal.example.test/article/1.pdf")
+
     def test_unpaywall_urls_are_deduplicated_in_priority_order(self) -> None:
         finder = PdfFinder()
         data = {
