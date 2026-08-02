@@ -11,10 +11,15 @@ import xml.etree.ElementTree as ET
 
 INVALID_FILENAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WHITESPACE = re.compile(r"\s+")
+TITLE_WORD = re.compile(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")
 PMID_LABEL = re.compile(r"\bPMID\s*[:：]?\s*(\d{1,9})\b", re.IGNORECASE)
 PUBMED_URL = re.compile(r"pubmed\.ncbi\.nlm\.nih\.gov/(\d{1,9})(?:/|\b)", re.IGNORECASE)
 PMID_ONLY_LINE = re.compile(r"^\s*(?:PMID\s*[:：]?\s*)?(\d{1,9})\s*$", re.IGNORECASE)
 DOCX_WORD_NAMESPACE = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+TITLE_STOPWORDS = {
+    "a", "an", "and", "as", "at", "by", "during", "for", "from", "in", "into",
+    "of", "on", "or", "the", "to", "with",
+}
 
 
 def read_pmids(path: Path) -> list[str]:
@@ -98,8 +103,23 @@ def sanitize_filename_part(value: str, max_length: int = 40) -> str:
     return cleaned[:max_length].rstrip() or "untitled"
 
 
+def title_keywords(title: str, max_words: int = 10) -> str:
+    words: list[str] = []
+    seen: set[str] = set()
+    for word in TITLE_WORD.findall(title):
+        normalized = word.lower()
+        if normalized in TITLE_STOPWORDS or normalized in seen:
+            continue
+        words.append(word)
+        seen.add(normalized)
+        if len(words) == max_words:
+            break
+    return " ".join(words) or "untitled"
+
+
 def pdf_filename(pmid: str, title: str) -> str:
-    return f"{pmid}_{sanitize_filename_part(title)}.pdf"
+    keywords = sanitize_filename_part(title_keywords(title), max_length=140)
+    return f"{pmid}_{keywords}.pdf"
 
 
 def write_csv(path: Path, rows: Iterable[dict[str, str]], fieldnames: list[str]) -> None:

@@ -5,12 +5,14 @@ PMIDリストから論文メタデータを取得し、合法的に公開され�
 ## できること
 
 - `input/pmids.txt`、Google Docsからコピーした文章、または `.docx` に含まれるPMIDから、NCBI E-utilitiesでメタデータを取得
-- PMCIDがある論文は PubMed Central の公開PDF取得を試行
+- PMCIDがある論文は PubMed Central の公開PDFと公式OAパッケージからの取得を試行
 - DOIがある論文は Unpaywall API と Europe PMC API でOA PDF URLを検索
 - Unpaywallの最優先URLが失敗した場合も、残りのOA PDF候補を順に試行
 - 一部出版社の既知の正規PDF URLと、出版社ページが標準メタデータで明示するPDF URLを試行
 - PubMedのメタデータにPIIが含まれる場合は、出版社PDF候補の生成にも利用
 - 取得できたPDFを `pdf/` に保存
+- `pdf/` に手動保存したPDFをPMID・DOI・タイトルで照合し、CSVへ取得済みとして反映
+- 照合できたPDF名を `PMID_約10語のタイトルキーワード.pdf` に統一
 - 全論文のメタデータを `output/metadata.csv` に出力
 - 取得できなかった論文を `output/not_found.csv` に出力
 
@@ -83,6 +85,30 @@ chmod +x run_pubmed_pdf_downloader.command
 - 手動確認用URL: `output/manual_check.csv`
 - 実行履歴: `output/history.csv`
 
+`manual_check.csv` は手動取得の見込みが高い順に並びます。PubMed LinkOutが
+`free resource` と示す論文、PMCIDがある論文、出版社の既知PDF URLがある論文について、
+優先度、判定根拠、ブラウザで開くURLを記録します。`not_found.csv` にも最優先の手動確認URLを残します。
+
+## 手動ダウンロードしたPDFを同期する
+
+ブラウザで取得したPDFを `pdf/` フォルダへ入れ、`run_sync_pdf_library.command` を
+ダブルクリックします。PDFのファイル名と先頭ページからPMID、DOI、PMCID、PII、タイトルを照合し、
+次の処理を行います。
+
+- ファイル名を `PMID_約10語のタイトルキーワード.pdf` に変更
+- `metadata.csv` に `pdf_status=available` とPDF名・照合方法を記録
+- 取得済みPMIDを `not_found.csv` と `manual_check.csv` から削除
+- `history.csv` に `synced_existing` として追記
+
+確実に照合できないPDFや、改名先と衝突するPDFは変更せず、実行画面に `Unmatched` と表示します。
+通常の `run_pubmed_pdf_downloader.command` 実行時にも、ダウンロード開始前に同じ同期処理を行います。
+
+ターミナルから同期だけ実行する場合:
+
+```bash
+python -m src.main --sync-library
+```
+
 ## Google Docsから簡単に実行する
 
 Google Docs APIの認証設定は不要です。Google Document内に `PMID: 31452104`、PubMed URL、またはPMIDだけの行が含まれていれば利用できます。
@@ -133,7 +159,7 @@ https://pubmed.ncbi.nlm.nih.gov/30049270/
 ## 注意点
 
 - このツールは、PubMed Central、Unpaywall、Europe PMC、または認証不要でPDFとして返る出版社の正規PDF URLから取得します。
-- 現在、出版社PDF候補として Wiley Online Library の `https://onlinelibrary.wiley.com/doi/epdf/{DOI}` 形式、Gastrojournal / ScienceDirect 系のPIIベースPDF URLを試行します。
+- 現在、出版社PDF候補として Wiley Online Library、Hogrefe、Gastrojournal / ScienceDirect 系の正規PDF URLを試行します。
 - それ以外の出版社でも、論文ページに `citation_pdf_url` などの標準的なPDFメタデータがあり、認証なしで実際のPDFが返る場合は保存します。
 - PubMedにOpen accessやFree full textの表示があっても、APIからPDF直リンクが得られない場合があります。その場合は出版社候補URLを試し、PDFではなくHTML、CAPTCHA、ログイン画面が返った場合は自動保存しません。
 - 有料論文、所属機関ログイン、出版社サイトの認証が必要なPDFは取得しません。

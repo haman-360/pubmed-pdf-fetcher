@@ -4,6 +4,7 @@ import os
 from html.parser import HTMLParser
 from dataclasses import dataclass
 from pathlib import Path
+import tarfile
 from urllib.parse import quote, urljoin
 import xml.etree.ElementTree as ET
 
@@ -27,6 +28,14 @@ class PdfResult:
     source: str = ""
     url: str = ""
     reason: str = ""
+
+
+@dataclass(frozen=True)
+class ManualCheckCandidate:
+    url: str
+    priority: str
+    status: str
+    evidence: str
 
 
 class PdfFinder:
@@ -83,9 +92,14 @@ class PdfFinder:
         return PdfResult(success=False, reason="; ".join(reasons) or "No legally available OA PDF found")
 
     def _try_pmc(self, pmcid: str, destination: Path) -> PdfResult:
-        oa_pdf_url = self._pmc_oa_pdf_url(pmcid)
+        oa_pdf_url, oa_package_url = self._pmc_oa_urls(pmcid)
         if oa_pdf_url:
             result = self._download_if_pdf(oa_pdf_url, destination, "PMC")
+            if result.success:
+                return result
+
+        if oa_package_url:
+            result = self._download_pmc_oa_package(oa_package_url, destination)
             if result.success:
                 return result
 
@@ -110,21 +124,80 @@ class PdfFinder:
 
         return PdfResult(success=False, source="PMC", reason=last_reason or "PMC PDF not found")
 
-    def _pmc_oa_pdf_url(self, pmcid: str) -> str:
+    def _pmc_oa_urls(self, pmcid: str) -> tuple[str, str]:
         url = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi"
         try:
             response = self.session.get(url, params={"id": pmcid}, timeout=self.timeout)
             if response.status_code == 404:
-                return ""
+                return "", ""
             response.raise_for_status()
             root = ET.fromstring(response.content)
         except (requests.RequestException, ET.ParseError):
-            return ""
+            return "", ""
 
+        pdf_url = ""
+        package_url = ""
         for link in root.findall(".//link"):
-            if link.attrib.get("format", "").lower() == "pdf" and link.attrib.get("href"):
-                return link.attrib["href"]
-        return ""
+            link_format = link.attrib.get("format", "").lower()
+            href = link.attrib.get("href", "")
+            if link_format == "pdf" and href:
+                pdf_url = href
+            elif link_format in {"tgz", "tar.gz"} and href:
+                package_url = https_url_for_ftp(href)
+        return pdf_url, package_url
+
+    def _pmc_oa_pdf_url(self, pmcid: str) -> str:
+        """Return the direct PDF URL when the OA API supplies one."""
+        pdf_url, _ = self._pmc_oa_urls(pmcid)
+        return pdf_url
+
+    def _download_pmc_oa_package(self, url: str, destination: Path) -> PdfResult:
+        archive_path = destination.with_suffix(destination.suffix + ".oa-package.part")
+        temporary = destination.with_suffix(destination.suffix + ".part")
+        try:
+            archive_path.unlink(missing_ok=True)
+            temporary.unlink(missing_ok=True)
+            with self.session.get(url, timeout=self.timeout, stream=True, allow_redirects=True) as response:
+                if response.status_code in {401, 403}:
+                    return PdfResult(False, source="PMC OA package", url=url, reason="OA package requires authentication")
+                if response.status_code == 404:
+                    return PdfResult(False, source="PMC OA package", url=url, reason="OA package not found")
+                response.raise_for_status()
+                with archive_path.open("wb") as handle:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            handle.write(chunk)
+
+            with tarfile.open(archive_path, mode="r:gz") as archive:
+                pdf_members = [
+                    member
+                    for member in archive.getmembers()
+                    if member.isfile() and member.name.lower().endswith(".pdf")
+                ]
+                if not pdf_members:
+                    return PdfResult(False, source="PMC OA package", url=url, reason="No PDF in OA package")
+
+                member = max(pdf_members, key=lambda candidate: candidate.size)
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    return PdfResult(False, source="PMC OA package", url=url, reason="Could not read PDF in OA package")
+                with extracted, temporary.open("wb") as handle:
+                    first_chunk = extracted.read(8192)
+                    if not first_chunk.startswith(b"%PDF-"):
+                        return PdfResult(False, source="PMC OA package", url=url, reason="OA package entry is not a PDF")
+                    handle.write(first_chunk)
+                    while chunk := extracted.read(8192):
+                        handle.write(chunk)
+
+            temporary.replace(destination)
+            return PdfResult(True, source="PMC OA package", url=url)
+        except (requests.RequestException, tarfile.TarError) as exc:
+            return PdfResult(False, source="PMC OA package", url=url, reason=f"OA package download failed: {exc}")
+        except OSError as exc:
+            return PdfResult(False, source="PMC OA package", url=url, reason=f"Could not save PDF: {exc}")
+        finally:
+            archive_path.unlink(missing_ok=True)
+            temporary.unlink(missing_ok=True)
 
     def _pmc_article_page_pdf_url(self, pmcid: str) -> str:
         url = f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/"
@@ -199,6 +272,14 @@ class PdfFinder:
         if lower.startswith("10.1111/"):
             candidates.append(f"https://onlinelibrary.wiley.com/doi/epdf/{encoded}")
 
+        if lower.startswith("10.1024/"):
+            candidates.append(f"https://econtent.hogrefe.com/doi/pdf/{encoded}?download=true")
+
+        if lower.startswith("10.1136/bmj-") and metadata.volume:
+            article_id = quote(normalized.split("/", 1)[1], safe="-")
+            volume = quote(metadata.volume, safe="")
+            candidates.append(f"https://www.bmj.com/content/bmj/{volume}/{article_id}.full.pdf")
+
         if lower.startswith("10.1053/") and pii:
             compact_pii = compact_pii_for_url(pii)
             candidates.extend(
@@ -215,10 +296,75 @@ class PdfFinder:
         return self._publisher_pdf_candidates(ArticleMetadata(pmid="", doi=doi))
 
     def manual_pdf_candidates_for_article(self, metadata: ArticleMetadata) -> list[str]:
-        candidates = self._publisher_pdf_candidates(metadata)
+        return [candidate.url for candidate in self.manual_check_candidates_for_article(metadata)]
+
+    def manual_check_candidates_for_article(
+        self, metadata: ArticleMetadata
+    ) -> list[ManualCheckCandidate]:
+        candidates: list[ManualCheckCandidate] = []
+        free_evidence = "PubMed LinkOutで無料全文（free resource）と確認"
+
+        for url in self._publisher_pdf_candidates(metadata):
+            if metadata.free_full_text_url:
+                candidates.append(
+                    ManualCheckCandidate(
+                        url=url,
+                        priority="1_high",
+                        status="手動ダウンロードできる可能性が高い",
+                        evidence=f"{free_evidence}。出版社PDF直リンク候補あり",
+                    )
+                )
+            else:
+                candidates.append(
+                    ManualCheckCandidate(
+                        url=url,
+                        priority="2_medium",
+                        status="ブラウザで手動確認を推奨",
+                        evidence="出版社の既知PDF直リンク候補あり",
+                    )
+                )
+
+        if metadata.pmcid:
+            candidates.append(
+                ManualCheckCandidate(
+                    url=f"https://pmc.ncbi.nlm.nih.gov/articles/{metadata.pmcid}/",
+                    priority="1_high",
+                    status="手動ダウンロードできる可能性が高い",
+                    evidence="PMCIDがあり、PMCで全文公開",
+                )
+            )
+
+        if metadata.free_full_text_url:
+            candidates.append(
+                ManualCheckCandidate(
+                    url=metadata.free_full_text_url,
+                    priority="1_high",
+                    status="手動ダウンロードできる可能性が高い",
+                    evidence=free_evidence,
+                )
+            )
+
         if metadata.publisher_url:
-            candidates.append(metadata.publisher_url)
-        return list(dict.fromkeys(candidates))
+            candidates.append(
+                ManualCheckCandidate(
+                    url=metadata.publisher_url,
+                    priority="3_low" if not metadata.free_full_text_url else "1_high",
+                    status=(
+                        "手動ダウンロードできる可能性が高い"
+                        if metadata.free_full_text_url
+                        else "出版社ページで無料公開か確認"
+                    ),
+                    evidence=free_evidence if metadata.free_full_text_url else "出版社ページあり",
+                )
+            )
+
+        unique: list[ManualCheckCandidate] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate.url not in seen:
+                unique.append(candidate)
+                seen.add(candidate.url)
+        return sorted(unique, key=lambda candidate: candidate.priority)
 
     def _publisher_landing_pdf_url(self, landing_url: str) -> str:
         if not landing_url:
@@ -406,3 +552,9 @@ def normalize_pii(value: str) -> str:
 
 def compact_pii_for_url(value: str) -> str:
     return "".join(char for char in value if char.isalnum())
+
+
+def https_url_for_ftp(url: str) -> str:
+    if url.lower().startswith("ftp://"):
+        return "https://" + url[6:]
+    return url

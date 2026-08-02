@@ -24,6 +24,8 @@ class ArticleMetadata:
     pmcid: str = ""
     pii: str = ""
     publisher_url: str = ""
+    volume: str = ""
+    free_full_text_url: str = ""
 
     def as_csv_row(self) -> dict[str, str]:
         return {
@@ -35,6 +37,8 @@ class ArticleMetadata:
             "PMCID": self.pmcid,
             "PII": self.pii,
             "publisher_url": self.publisher_url,
+            "volume": self.volume,
+            "free_full_text_url": self.free_full_text_url,
         }
 
 
@@ -81,7 +85,11 @@ class PubMedClient:
             response.raise_for_status()
 
             root = ET.fromstring(response.content)
-            records.extend(self._parse_article(article) for article in root.findall(".//PubmedArticle"))
+            batch_records = [self._parse_article(article) for article in root.findall(".//PubmedArticle")]
+            free_links = self._fetch_free_full_text_links(batch)
+            for record in batch_records:
+                record.free_full_text_url = free_links.get(record.pmid, "")
+            records.extend(batch_records)
             if start + EFETCH_BATCH_SIZE < len(pmids):
                 time.sleep(0.34)
         found = {record.pmid for record in records}
@@ -93,11 +101,46 @@ class PubMedClient:
         order = {pmid: index for index, pmid in enumerate(pmids)}
         return sorted(records, key=lambda record: order.get(record.pmid, len(order)))
 
+    def _fetch_free_full_text_links(self, pmids: list[str]) -> dict[str, str]:
+        params = {
+            "dbfrom": "pubmed",
+            "id": ",".join(pmids),
+            "cmd": "llinks",
+            "retmode": "xml",
+            "tool": "pubmed_pdf_fetcher",
+        }
+        if self.email:
+            params["email"] = self.email
+        if self.api_key:
+            params["api_key"] = self.api_key
+
+        try:
+            response = self.session.get(f"{EUTILS_BASE}/elink.fcgi", params=params, timeout=self.timeout)
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+        except (requests.RequestException, ET.ParseError):
+            return {}
+
+        links: dict[str, str] = {}
+        for id_url_set in root.findall(".//IdUrlSet"):
+            pmid = text(id_url_set.find("Id"))
+            for obj_url in id_url_set.findall("ObjUrl"):
+                category = text(obj_url.find("Category")).lower()
+                attributes = {
+                    text(attribute).lower() for attribute in obj_url.findall("Attribute")
+                }
+                url = text(obj_url.find("Url"))
+                if category == "full text sources" and "free resource" in attributes and url:
+                    links[pmid] = url
+                    break
+        return links
+
     def _parse_article(self, article: ET.Element) -> ArticleMetadata:
         pmid = text(article.find(".//MedlineCitation/PMID"))
         title = flatten_text(article.find(".//ArticleTitle"))
         journal = text(article.find(".//Journal/Title")) or text(article.find(".//Journal/ISOAbbreviation"))
         year = extract_year(article)
+        volume = text(article.find(".//Journal/JournalIssue/Volume"))
         doi = extract_article_id(article, "doi")
         pmcid = normalize_pmcid(extract_article_id(article, "pmc"))
         pii = extract_article_id(article, "pii")
@@ -112,6 +155,7 @@ class PubMedClient:
             pmcid=pmcid,
             pii=pii,
             publisher_url=publisher_url,
+            volume=volume,
         )
 
 
