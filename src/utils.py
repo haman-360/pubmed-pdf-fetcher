@@ -103,7 +103,7 @@ def sanitize_filename_part(value: str, max_length: int = 40) -> str:
     return cleaned[:max_length].rstrip() or "untitled"
 
 
-def title_keywords(title: str, max_words: int = 10) -> str:
+def title_keywords(title: str, max_words: int = 5) -> str:
     words: list[str] = []
     seen: set[str] = set()
     for word in TITLE_WORD.findall(title):

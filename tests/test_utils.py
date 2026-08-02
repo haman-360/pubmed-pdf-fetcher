@@ -37,7 +37,7 @@ https://pubmed.ncbi.nlm.nih.gov/30049270/
 
             self.assertEqual(read_pmids(path), ["31452104", "30049270"])
 
-    def test_pdf_filename_uses_up_to_ten_meaningful_title_words(self) -> None:
+    def test_pdf_filename_uses_up_to_five_meaningful_title_words(self) -> None:
         title = (
             "Antihistamines for atopic dermatitis: a systematic review and network "
             "meta-analysis of randomised clinical trials in children"
@@ -45,13 +45,11 @@ https://pubmed.ncbi.nlm.nih.gov/30049270/
 
         self.assertEqual(
             title_keywords(title),
-            "Antihistamines atopic dermatitis systematic review network meta-analysis "
-            "randomised clinical trials",
+            "Antihistamines atopic dermatitis systematic review",
         )
         self.assertEqual(
             pdf_filename("42526949", title),
-            "42526949_Antihistamines atopic dermatitis systematic review network "
-            "meta-analysis randomised clinical trials.pdf",
+            "42526949_Antihistamines atopic dermatitis systematic review.pdf",
         )
 
 

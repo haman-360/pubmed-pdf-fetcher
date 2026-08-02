@@ -12,7 +12,7 @@ PMIDリストから論文メタデータを取得し、合法的に公開され�
 - PubMedのメタデータにPIIが含まれる場合は、出版社PDF候補の生成にも利用
 - 取得できたPDFを `pdf/` に保存
 - `pdf/` に手動保存したPDFをPMID・DOI・タイトルで照合し、CSVへ取得済みとして反映
-- 照合できたPDF名を `PMID_約10語のタイトルキーワード.pdf` に統一
+- 照合できたPDF名を `PMID_最大5語のタイトルキーワード.pdf` に統一
 - 全論文のメタデータを `output/metadata.csv` に出力
 - 取得できなかった論文を `output/not_found.csv` に出力
 
@@ -95,7 +95,7 @@ chmod +x run_pubmed_pdf_downloader.command
 ダブルクリックします。PDFのファイル名と先頭ページからPMID、DOI、PMCID、PII、タイトルを照合し、
 次の処理を行います。
 
-- ファイル名を `PMID_約10語のタイトルキーワード.pdf` に変更
+- ファイル名を `PMID_最大5語のタイトルキーワード.pdf` に変更
 - `metadata.csv` に `pdf_status=available` とPDF名・照合方法を記録
 - 取得済みPMIDを `not_found.csv` と `manual_check.csv` から削除
 - `history.csv` に `synced_existing` として追記
